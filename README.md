@@ -12,7 +12,7 @@ From the popup you can open a task, check it off, and quick-add a new one.
 ## Install
 
 ```bash
-omarchy plugin add <git-url-of-this-repo> --enable
+omarchy plugin add https://github.com/tomtorggler/omarchy-asana.git --enable
 # or, from a local checkout:
 ln -s "$PWD" ~/.config/omarchy/plugins/tto.asana
 omarchy-shell shell rescanPlugins
