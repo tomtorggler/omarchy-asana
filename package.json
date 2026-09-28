@@ -1,0 +1,7 @@
+{
+  "name": "omarchy-asana",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": { "test": "node --test test/*.test.js" },
+  "engines": { "node": ">=20" }
+}

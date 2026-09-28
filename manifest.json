@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "tto.asana",
+  "name": "Asana",
+  "version": "0.1.0",
+  "author": "tto",
+  "description": "Your Asana My Tasks list, grouped by section, in a keyboard-driven bar popup.",
+  "kinds": ["service", "bar-widget"],
+  "entryPoints": { "service": "AsanaService.qml", "barWidget": "Panel.qml" },
+  "barWidget": {
+    "displayName": "Asana",
+    "description": "Bar icon with the number of tasks due today or overdue; the popup shows My Tasks grouped by section, like Asana's list view.",
+    "category": "Productivity",
+    "aliases": ["asana", "tasks", "todo"],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": { "refreshIntervalSec": 300, "workspace": "", "badge": "due" },
+    "schema": [
+      { "key": "refreshIntervalSec", "type": "integer", "label": "Refresh interval (seconds)", "min": 60, "max": 3600, "step": 60, "defaultValue": 300 },
+      { "key": "workspace", "type": "string", "label": "Workspace", "defaultValue": "", "description": "Workspace name or gid. Empty uses your first workspace." },
+      { "key": "badge", "type": "enum", "label": "Bar count", "options": ["due", "open", "none"], "defaultValue": "due", "description": "due: overdue plus due today. open: every open task. none: icon only." }
+    ]
+  }
+}

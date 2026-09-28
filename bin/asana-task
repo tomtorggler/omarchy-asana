@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+#
+# Change a task for the omarchy Asana widget.
+#
+# Usage: asana-task complete <task-gid>
+#        asana-task reopen <task-gid>
+#        asana-task add <workspace-gid> <name>
+#
+# `add` assigns the new task to you, so Asana files it under "Recently
+# assigned" in My tasks.
+#
+# Prints the task as {"task":{"gid","name","completed"}}. On failure prints
+# {"error":{"kind":...,"message":...}} and exits non-zero, like asana-fetch.
+
+set -euo pipefail
+source "$(dirname -- "$(readlink -f -- "$0")")/asana-common.sh"
+
+usage() { sed -n '3,13p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+
+set_completed() {
+  local gid=$1 completed=$2
+  [[ $gid =~ ^[0-9]+$ ]] || fail api "Invalid task id '$gid'."
+  api PUT "/tasks/$gid?opt_fields=name,completed" \
+    "$(jq -cn --argjson completed "$completed" '{data: {completed: $completed}}')"
+}
+
+add_task() {
+  local workspace=$1 name
+  name=$(sed 's/^[[:space:]]*//; s/[[:space:]]*$//' <<<"$2")
+  [[ $workspace =~ ^[0-9]+$ ]] || fail api "Invalid workspace id '$workspace'."
+  [[ -n $name ]] || fail api "A task needs a name."
+  api POST "/tasks?opt_fields=name,completed" \
+    "$(jq -cn --arg workspace "$workspace" --arg name "$name" '{data: {workspace: $workspace, assignee: "me", name: $name}}')"
+}
+
+case "${1:-}" in
+  complete) (($# == 2)) || usage 1; require_token; response=$(set_completed "$2" true) || exit $? ;;
+  reopen) (($# == 2)) || usage 1; require_token; response=$(set_completed "$2" false) || exit $? ;;
+  add) (($# == 3)) || usage 1; require_token; response=$(add_task "$2" "$3") || exit $? ;;
+  -h | --help) usage ;;
+  *) usage 1 ;;
+esac
+
+jq -c '{task: {gid: .data.gid, name: .data.name, completed: .data.completed}}' <<<"$response"

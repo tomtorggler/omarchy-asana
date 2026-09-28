@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+#
+# Store an Asana personal access token for the omarchy Asana widget.
+#
+# Usage: asana-login           prompt for the token
+#        asana-login --logout  forget the stored token
+#
+# Create a token at https://app.asana.com/0/my-apps (Personal access tokens).
+# The token is verified against the API, then saved in the GNOME keyring
+# (service=omarchy-asana). Without a keyring it falls back to
+# ${XDG_CONFIG_HOME:-~/.config}/omarchy/asana/token with mode 600.
+
+set -euo pipefail
+BIN_DIR="$(dirname -- "$(readlink -f -- "$0")")"
+source "$BIN_DIR/asana-common.sh"
+
+TOKEN_DIR="$(dirname -- "$TOKEN_FILE")"
+FETCH="$BIN_DIR/asana-fetch"
+
+refresh_widget() {
+  "$FETCH" --quiet >/dev/null 2>&1 || true
+}
+
+if [[ ${1:-} == "--logout" ]]; then
+  command -v secret-tool >/dev/null && secret-tool clear service omarchy-asana 2>/dev/null || true
+  rm -f "$TOKEN_FILE" "$CACHE_FILE"
+  echo "Asana token removed."
+  exit 0
+fi
+
+echo "Create a personal access token at https://app.asana.com/0/my-apps"
+read -rsp "Paste your Asana token: " token
+echo
+TOKEN=$(tr -d '[:space:]' <<<"$token")
+[[ -n $TOKEN ]] || { echo "No token given." >&2; exit 1; }
+
+if ! me=$(api GET "/users/me?opt_fields=name" 3>&1); then
+  jq -r '.error.message' <<<"$me" >&2
+  exit 1
+fi
+name=$(jq -r '.data.name' <<<"$me")
+
+if command -v secret-tool >/dev/null &&
+  printf '%s' "$TOKEN" | secret-tool store --label="Asana (omarchy)" service omarchy-asana 2>/dev/null; then
+  rm -f "$TOKEN_FILE"
+  echo "Signed in as $name. Token stored in the keyring."
+else
+  mkdir -p "$TOKEN_DIR"
+  (umask 077 && printf '%s\n' "$TOKEN" >"$TOKEN_FILE")
+  echo "Signed in as $name. Token stored in $TOKEN_FILE."
+fi
+
+refresh_widget
