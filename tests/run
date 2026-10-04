@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Portable checks: manifest syntax, script syntax, Model.js unit tests, and
+# the official validator when an Omarchy install is present.
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+python3 -m json.tool "$root/manifest.json" >/dev/null
+for script in "$root"/bin/*; do bash -n "$script"; done
+node --test "$root"/test/*.test.js
+
+if command -v omarchy >/dev/null 2>&1; then
+  omarchy plugin validate "$root"
+fi
+
+printf 'All portable plugin checks passed.\n'

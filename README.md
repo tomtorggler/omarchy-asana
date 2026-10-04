@@ -9,6 +9,16 @@ just mirrors the result.
 
 From the popup you can open a task, check it off, and quick-add a new one.
 
+## Requirements
+
+- Omarchy 4 (tested on 4.0.4)
+- `curl` and `jq`
+- `secret-tool` (package `libsecret`) to keep the token in the GNOME keyring;
+  optional, see below
+- An Asana account and a personal access token
+
+All three packages ship with a standard Omarchy install.
+
 ## Install
 
 ```bash
@@ -30,6 +40,16 @@ The token is checked against the API and stored in the GNOME keyring
 (`secret-tool`, service `omarchy-asana`). Without a keyring it goes to
 `~/.config/omarchy/asana/token` with mode 600. `asana-login --logout` removes
 it. `$ASANA_TOKEN` overrides both.
+
+## Uninstall
+
+```bash
+~/.config/omarchy/plugins/tto.asana/bin/asana-login --logout   # forget the token
+omarchy plugin remove tto.asana
+rm -rf ~/.cache/omarchy-asana ~/.local/state/omarchy-asana     # optional: task cache, fold state
+```
+
+Revoke the token at <https://app.asana.com/0/my-apps> if you no longer need it.
 
 ## Using it
 
@@ -91,9 +111,24 @@ bin/asana-fetch | jq '.tasks[] | {name, section: .assignee_section.name, due_on}
 | `TaskRow.qml`, `SectionHeader.qml` | List rows |
 | `Model.js` | Grouping, counts, date wording, result parsing (plain functions) |
 
+## What it touches
+
+- **Network:** only `https://app.asana.com/api/1.0`, with your token.
+- **Processes:** the service runs the scripts in `bin/` (and `mkdir`); the
+  popup runs `omarchy-launch-browser` to open tasks and a floating terminal
+  for **Sign in**. Commands are argument lists; the one value the terminal
+  launcher passes through a shell (the `asana-login` path) is quoted first.
+- **Files written:** `~/.cache/omarchy-asana/tasks.json` (task snapshot),
+  `~/.local/state/omarchy-asana/state.json` (folded sections), and the token,
+  either in the keyring or in `~/.config/omarchy/asana/token` (mode 600).
+- **Asana writes:** only when you complete, reopen, or add a task.
+
+Nothing else in your configuration is changed.
+
 ## Development
 
 ```bash
+tests/run                    # everything below plus script syntax checks
 npm test                     # Model.js unit tests (node >= 20)
 omarchy plugin validate .    # manifest check
 omarchy restart shell        # load QML edits

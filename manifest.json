@@ -4,6 +4,7 @@
   "name": "Asana",
   "version": "0.1.0",
   "author": "tto",
+  "license": "MIT",
   "description": "Your Asana My Tasks list, grouped by section, in a keyboard-driven bar popup.",
   "kinds": ["service", "bar-widget"],
   "entryPoints": { "service": "AsanaService.qml", "barWidget": "Panel.qml" },
