@@ -9,6 +9,8 @@ just mirrors the result.
 
 From the popup you can open a task, check it off, and quick-add a new one.
 
+![The Asana popup under the bar icon, showing My Tasks grouped by section](preview.png)
+
 ## Requirements
 
 - Omarchy 4 (tested on 4.0.4)
@@ -24,15 +26,15 @@ All three packages ship with a standard Omarchy install.
 ```bash
 omarchy plugin add https://github.com/tomtorggler/omarchy-asana.git --enable
 # or, from a local checkout:
-ln -s "$PWD" ~/.config/omarchy/plugins/tto.asana
+ln -s "$PWD" ~/.config/omarchy/plugins/io.github.tomtorggler.asana
 omarchy-shell shell rescanPlugins
-omarchy plugin enable tto.asana
+omarchy plugin enable io.github.tomtorggler.asana
 ```
 
 Then sign in: open the popup and choose **Sign in**, or run
 
 ```bash
-~/.config/omarchy/plugins/tto.asana/bin/asana-login
+~/.config/omarchy/plugins/io.github.tomtorggler.asana/bin/asana-login
 ```
 
 and paste a personal access token from <https://app.asana.com/0/my-apps>.
@@ -44,8 +46,8 @@ it. `$ASANA_TOKEN` overrides both.
 ## Uninstall
 
 ```bash
-~/.config/omarchy/plugins/tto.asana/bin/asana-login --logout   # forget the token
-omarchy plugin remove tto.asana
+~/.config/omarchy/plugins/io.github.tomtorggler.asana/bin/asana-login --logout   # forget the token
+omarchy plugin remove io.github.tomtorggler.asana
 rm -rf ~/.cache/omarchy-asana ~/.local/state/omarchy-asana     # optional: task cache, fold state
 ```
 
@@ -74,7 +76,7 @@ tasks are assigned to you, so Asana files them under *Recently assigned*.
 Folded sections are remembered in `~/.local/state/omarchy-asana/state.json`.
 *Recently assigned* starts folded.
 
-IPC: `omarchy-shell tto.asana toggle|open|close|add|refresh|status`.
+IPC: `omarchy-shell io.github.tomtorggler.asana toggle|open|close|add|refresh|status`.
 
 ## Settings
 
@@ -133,6 +135,18 @@ npm test                     # Model.js unit tests (node >= 20)
 omarchy plugin validate .    # manifest check
 omarchy restart shell        # load QML edits
 ```
+
+To recapture `preview.png` with made-up tasks instead of your own:
+
+```bash
+cp ~/.cache/omarchy-asana/tasks.json /tmp/tasks.json        # keep your data
+demo/fake-snapshot > ~/.cache/omarchy-asana/tasks.json
+omarchy-shell io.github.tomtorggler.asana open               # screenshot within a minute
+omarchy-shell io.github.tomtorggler.asana refresh            # back to your tasks
+```
+
+Opening the popup refetches only when the snapshot is more than a minute old,
+so the fake data stays on screen for that minute.
 
 Hot reload did not pick up QML edits in a symlinked checkout during
 development, so restart the shell after changing `Panel.qml`.

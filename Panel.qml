@@ -12,7 +12,7 @@ import "Model.js" as Model
 // the button, the popup layout and the keyboard cursor.
 Panel {
   id: root
-  moduleName: "tto.asana"
+  moduleName: "io.github.tomtorggler.asana"
   ipcTarget: moduleName
   manageIpc: false
 

@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Print a made-up My Tasks snapshot in asana-fetch's format, with due dates
+# relative to today, for screenshots and demos. Nothing here is real data.
+#
+#   demo/fake-snapshot > ~/.cache/omarchy-asana/tasks.json
+set -euo pipefail
+
+day() { date -d "$1" +%F; }
+
+jq -n \
+  --arg overdue "$(day '-3 days')" --arg today "$(day today)" \
+  --arg tomorrow "$(day tomorrow)" --arg soon "$(day '+3 days')" \
+  --arg later "$(day '+12 days')" '
+  def section(gid; name): {gid: gid, name: name};
+  def project(name; color): {gid: name, name: name, color: color};
+  def task(gid; name; due; s; projects; subtasks):
+    {gid: gid, name: name, resource_subtype: "default_task", due_on: due,
+     assignee_section: s, projects: projects, num_subtasks: subtasks,
+     permalink_url: "https://app.asana.com/0/0/\(gid)", parent: null};
+
+  section("s1"; "Recently assigned") as $recent |
+  section("s2"; "Today") as $today_s |
+  section("s3"; "This Week") as $week |
+  section("s4"; "Later") as $later_s |
+  project("Website relaunch"; "blue") as $web |
+  project("Q4 Planning"; "orange") as $q4 |
+  project("Hiring"; "green") as $hiring |
+  {
+    fetchedAt: (now | todate),
+    user: {gid: "u1", name: "Alex Example"},
+    workspace: {gid: "w1", name: "Acme Studio"},
+    workspaces: [{gid: "w1", name: "Acme Studio"}],
+    taskListGid: "l1",
+    sections: [$recent, $today_s, $week, $later_s],
+    tasks: [
+      task("t1"; "Review onboarding copy"; $tomorrow; $recent; [$web]; 0),
+      task("t2"; "Send invoice to Northwind"; $overdue; $today_s; []; 0),
+      task("t3"; "Prepare sprint demo"; $today; $today_s; [$web]; 3),
+      task("t4"; "Reply to design feedback"; $today; $today_s; [$web]; 0),
+      task("t5"; "Draft Q4 budget"; $soon; $week; [$q4]; 2),
+      task("t6"; "Interview: frontend candidate"; $soon; $week; [$hiring]; 0),
+      task("t7"; "Book team offsite venue"; null; $week; [$q4]; 0),
+      task("t8"; "Update dependency licenses"; $later; $later_s; []; 0),
+      task("t9"; "Write retro notes"; null; $later_s; []; 0)
+    ]
+  }'

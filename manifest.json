@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "tto.asana",
+  "id": "io.github.tomtorggler.asana",
   "name": "Asana",
   "version": "0.1.0",
-  "author": "tto",
+  "author": "Thomas Torggler",
   "license": "MIT",
   "description": "Your Asana My Tasks list, grouped by section, in a keyboard-driven bar popup.",
   "kinds": ["service", "bar-widget"],
