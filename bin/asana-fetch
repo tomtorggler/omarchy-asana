@@ -63,6 +63,8 @@ task_list_gid=$(jq -r '.data.gid' <<<"$task_list")
 sections=$(api_optional GET "/projects/$task_list_gid/sections?opt_fields=name") || sections='{}'
 jq -c '.data // []' <<<"$sections" >"$work/sections.json"
 
+# At most 20 pages of 100 tasks. Past that the snapshot says it is truncated
+# rather than passing a partial list off as complete.
 offset=""
 for page_no in {01..20}; do
   page="$work/page-$page_no.json"
@@ -75,6 +77,7 @@ snapshot=$(jq -cn \
   --slurpfile me "$work/me.json" \
   --slurpfile workspace "$work/workspace.json" \
   --arg taskListGid "$task_list_gid" \
+  --argjson truncated "$([[ -n $offset ]] && echo true || echo false)" \
   --slurpfile sections "$work/sections.json" \
   --slurpfile pages <(cat "$work"/page-*.json) \
   '{
@@ -84,8 +87,13 @@ snapshot=$(jq -cn \
     workspaces: $me[0].data.workspaces,
     taskListGid: $taskListGid,
     sections: $sections[0],
-    tasks: [$pages[].data[]]
+    tasks: [$pages[].data[]],
+    truncated: $truncated
   }') || fail api "Could not parse the Asana response."
+
+# asana-login --logout during the fetch deletes the cache and the token; do
+# not write the tasks back after that.
+[[ -n $(read_token) ]] || fail no-token "Signed out during the fetch."
 
 mkdir -p "$CACHE_DIR"
 tmp=$(mktemp "$CACHE_DIR/.tasks.XXXXXX")

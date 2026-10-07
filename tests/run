@@ -5,9 +5,10 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 python3 -m json.tool "$root/manifest.json" >/dev/null
-for script in "$root"/bin/* "$root"/demo/* "$root"/tests/argv-privacy; do bash -n "$script"; done
+for script in "$root"/bin/* "$root"/demo/* "$root"/tests/argv-privacy "$root"/tests/fetch-snapshot; do bash -n "$script"; done
 node --test "$root"/test/*.test.js
 "$root/tests/argv-privacy"
+"$root/tests/fetch-snapshot"
 
 if command -v omarchy >/dev/null 2>&1; then
   omarchy plugin validate "$root"

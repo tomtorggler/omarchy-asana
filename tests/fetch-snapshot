@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# asana-fetch against a fake API: a list that ends within 20 pages is
+# complete, one that goes on is flagged truncated, and a sign-out during the
+# fetch writes no cache. PATH holds only the tools the scripts use (no
+# secret-tool), so the real keyring is never read.
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+mkdir -p "$tmp/bin" "$tmp/config/omarchy/asana"
+for cmd in bash jq sed cat tr mktemp rm mv mkdir dirname readlink; do
+  ln -s "$(command -v "$cmd")" "$tmp/bin/$cmd"
+done
+
+# Serves $tmp/pages pages of 100 tasks. With $tmp/logout present, the first
+# task page removes the token file, as asana-login --logout would.
+cat >"$tmp/bin/curl" <<EOF
+#!$(command -v bash)
+url=\${!#}; cat >/dev/null
+case "\$url" in
+  */user_task_lists/*/tasks*)
+    [[ -e $tmp/logout ]] && rm -f "$tmp/config/omarchy/asana/token"
+    n=\$((\$(cat $tmp/served 2>/dev/null || echo 0) + 1)); echo \$n >$tmp/served
+    data=\$(jq -cn --argjson n \$n '[range(100) | {gid: "\(\$n)-\(.)", name: "t"}]')
+    if ((n < \$(cat $tmp/pages))); then next='{"offset":"o'\$n'"}'; else next=null; fi
+    out="{\"data\":\$data,\"next_page\":\$next}" ;;
+  */users/me\?*) out='{"data":{"gid":"1","name":"U","workspaces":[{"gid":"42","name":"W"}]}}' ;;
+  */users/me/user_task_list*) out='{"data":{"gid":"7"}}' ;;
+  */sections*) out='{"data":[]}' ;;
+esac
+printf '%s\n200' "\$out"
+EOF
+chmod +x "$tmp/bin/curl"
+
+fail() { printf 'fetch-snapshot: %s\n' "$*" >&2; exit 1; }
+
+fetch() {
+  printf 'token\n' >"$tmp/config/omarchy/asana/token"
+  rm -f "$tmp/served" "$tmp/cache/omarchy-asana/tasks.json"
+  echo "$1" >"$tmp/pages"
+  env -i HOME="$tmp" XDG_CONFIG_HOME="$tmp/config" XDG_CACHE_HOME="$tmp/cache" PATH="$tmp/bin" \
+    "$root/bin/asana-fetch" | jq -c '{tasks: (.tasks | length), truncated}'
+}
+
+[[ $(fetch 3) == '{"tasks":300,"truncated":false}' ]] || fail "3 pages: $(fetch 3)"
+[[ $(fetch 20) == '{"tasks":2000,"truncated":false}' ]] || fail "20 pages: $(fetch 20)"
+[[ $(fetch 21) == '{"tasks":2000,"truncated":true}' ]] || fail "21 pages: $(fetch 21)"
+
+touch "$tmp/logout"
+out=$(fetch 1 2>&1) && fail "fetch after sign-out succeeded: $out"
+[[ ! -e $tmp/cache/omarchy-asana/tasks.json ]] || fail "tasks written back after sign-out"
+
+printf 'fetch-snapshot: pagination and sign-out checks passed.\n'

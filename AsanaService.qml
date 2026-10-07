@@ -11,7 +11,8 @@ import "Model.js" as Model
 // Snapshots arrive through one inlet: the cache file asana-fetch writes, from
 // this service or from a hand-run asana-login / asana-fetch. A snapshot in the
 // file means a fetch succeeded, so loading one clears the error. A failed
-// fetch leaves the file alone and reports through its stdout.
+// fetch leaves the file alone and reports through its stdout. When the file
+// goes away (asana-login --logout), everything it held is cleared.
 Item {
   id: service
   visible: false
@@ -29,19 +30,24 @@ Item {
   property bool loading: false
   property var collapsed: ({})
   property bool collapsedKnown: false
-  // Tasks completed since the last fetch. They stay listed, checked, until a
-  // fetch drops them, so a mistaken completion can be undone.
-  property var completedGids: ({})
+  // Completion marks, gid -> true: shownGids is what the list displays,
+  // confirmedGids what Asana has accepted. Checked tasks stay listed until
+  // a fetch drops them, so a mistaken completion can be undone.
+  property var shownGids: ({})
+  property var confirmedGids: ({})
   property bool completionsPending: false
+  // Bumped when the cache is cleared; a write started before that is
+  // ignored when it ends, so it cannot bring old marks back.
+  property int generation: 0
   // Short-lived feedback for writes: { text, tone: "info" | "error" }.
   property var notice: null
   property string todayYmd: Model.localYmd(new Date())
   property real nowMs: Date.now()
 
-  readonly property var sections: Model.buildSections(snapshot, todayYmd, completedGids)
-  readonly property var counts: Model.summary(snapshot, todayYmd, completedGids)
+  readonly property var sections: Model.buildSections(snapshot, todayYmd, shownGids)
+  readonly property var counts: Model.summary(snapshot, todayYmd, shownGids)
   readonly property bool needsLogin: error !== null && (error.kind === "no-token" || error.kind === "auth")
-  readonly property bool canWrite: snapshot !== null && !needsLogin
+  readonly property bool canWrite: snapshot !== null && !needsLogin && Model.workspaceMatches(snapshot, workspace)
 
   readonly property string binDir: decodeURIComponent(Qt.resolvedUrl("bin").toString().replace(/^file:\/\//, ""))
   readonly property string loginPath: binDir + "/asana-login"
@@ -76,9 +82,28 @@ Item {
     if (isNaN(fetched) || Date.now() - fetched > service.openRefreshSec * 1000) service.refresh()
   }
 
+  // The cache file went away, as asana-login --logout does: forget
+  // everything it held instead of leaving the tasks on screen.
+  function clearSnapshot() {
+    var hadSnapshot = service.snapshot !== null
+    service.generation++
+    service.snapshot = null
+    service.shownGids = {}
+    service.confirmedGids = {}
+    service.completionsPending = false
+    service.writeQueue = []
+    // Find out why (signed out, usually) rather than show an empty list.
+    if (hadSnapshot) service.refresh()
+  }
+
   function applySnapshot(next) {
     service.snapshot = next
-    service.completedGids = Model.pruneCompleted(service.completedGids, next)
+    // A task with a write in flight keeps its marks even if this snapshot
+    // already dropped it; otherwise the write's result would read the
+    // missing mark as an undo and send the opposite.
+    var pending = service.pendingGids()
+    service.shownGids = Model.pruneCompleted(service.shownGids, next, pending)
+    service.confirmedGids = Model.pruneCompleted(service.confirmedGids, next, pending)
     if (!service.collapsedKnown) {
       service.collapsed = Model.defaultCollapsed(Model.buildSections(next, service.todayYmd), service.initiallyCollapsed)
       service.collapsedKnown = true
@@ -99,28 +124,40 @@ Item {
 
   // ---- Writing
 
-  function setCompleted(gid, completed) {
-    var next = {}
-    for (var key in service.completedGids) if (service.completedGids[key]) next[key] = true
-    if (completed) next[gid] = true
-    else delete next[gid]
-    service.completedGids = next
+  // Tasks with a completion write queued or running. A write left over
+  // from before the cache was cleared does not count: its result is ignored.
+  function pendingGids() {
+    var gids = {}
+    var ops = service.writeQueue.concat(service.runningWrite ? [service.runningWrite] : [])
+    for (var i = 0; i < ops.length; i++)
+      if (ops[i].gid && ops[i].generation === service.generation) gids[ops[i].gid] = true
+    return gids
+  }
+
+  function writePending(gid) {
+    return service.pendingGids()[gid] === true
   }
 
   // Check a task off, or reopen one checked off since the last fetch. The
-  // mark shows at once and is rolled back if Asana refuses.
+  // mark shows at once. Each task has at most one write in flight; toggling
+  // again meanwhile only changes the mark, and the write that follows sends
+  // whatever the mark says by then. A failed write puts the mark back to
+  // what Asana has.
   function toggleComplete(task) {
     if (!task || !service.canWrite) return
-    var completing = !service.completedGids[task.gid]
-    service.setCompleted(task.gid, completing)
+    var next = {}
+    for (var key in service.shownGids) if (service.shownGids[key]) next[key] = true
+    if (next[task.gid]) delete next[task.gid]
+    else next[task.gid] = true
+    service.shownGids = next
     service.completionsPending = true
-    service.enqueueWrite({ kind: completing ? "complete" : "reopen", gid: task.gid, name: task.name })
+    if (!service.writePending(task.gid)) service.enqueueWrite({ kind: "completion", gid: task.gid, name: task.name })
   }
 
   function addTask(name) {
     var trimmed = String(name || "").trim()
     if (trimmed === "" || !service.canWrite) return false
-    service.enqueueWrite({ kind: "add", name: trimmed })
+    service.enqueueWrite({ kind: "add", name: trimmed, workspaceGid: String(service.snapshot.workspace.gid) })
     return true
   }
 
@@ -132,37 +169,54 @@ Item {
   }
 
   function enqueueWrite(op) {
+    op.generation = service.generation
     service.writeQueue = service.writeQueue.concat([op])
     service.runNextWrite()
   }
 
   function runNextWrite() {
-    if (service.runningWrite || service.writeQueue.length === 0) return
-    var op = service.writeQueue[0]
-    service.writeQueue = service.writeQueue.slice(1)
-    service.runningWrite = op
-    if (op.kind === "add") {
-      taskProc.command = [service.binDir + "/asana-task", "add", String(service.snapshot.workspace.gid)]
-      taskProc.environment = { ASANA_TASK_NAME: op.name }
-    } else {
-      taskProc.command = [service.binDir + "/asana-task", op.kind, op.gid]
-      taskProc.environment = ({})
+    while (!service.runningWrite && service.writeQueue.length > 0) {
+      var op = service.writeQueue[0]
+      service.writeQueue = service.writeQueue.slice(1)
+      if (op.kind === "add") {
+        taskProc.command = [service.binDir + "/asana-task", "add", op.workspaceGid]
+        taskProc.environment = { ASANA_TASK_NAME: op.name }
+      } else {
+        var write = Model.completionWrite(op.gid, service.shownGids, service.confirmedGids)
+        if (!write) continue // toggled back before it ran: nothing to send
+        op.completed = write.completed
+        taskProc.command = [service.binDir + "/asana-task", write.completed ? "complete" : "reopen", op.gid]
+        taskProc.environment = ({})
+      }
+      service.runningWrite = op
+      taskProc.running = true
     }
-    taskProc.running = true
   }
 
   function finishWrite(text) {
     var op = service.runningWrite
     service.runningWrite = null
-    var result = Model.parseTaskResult(text)
-    if (result.error) {
-      if (op.kind !== "add") service.setCompleted(op.gid, op.kind !== "complete")
-      service.showNotice("Could not " + (op.kind === "add" ? "add" : op.kind) + " “" + op.name + "”: " + result.error.message, "error")
-    } else if (op.kind === "add") {
-      service.showNotice("Added “" + result.task.name + "” to Recently assigned", "info")
-      service.refresh()
-    }
+    if (op.generation === service.generation) service.applyWriteResult(op, Model.parseTaskResult(text))
     service.runNextWrite()
+  }
+
+  function applyWriteResult(op, result) {
+    if (op.kind === "add") {
+      if (result.error) {
+        service.showNotice("Could not add “" + op.name + "”: " + result.error.message, "error")
+      } else {
+        service.showNotice("Added “" + result.task.name + "” to Recently assigned", "info")
+        service.refresh()
+      }
+      return
+    }
+    var marks = Model.afterCompletionWrite(op.gid, op.completed, !result.error, service.shownGids, service.confirmedGids)
+    service.shownGids = marks.shown
+    service.confirmedGids = marks.confirmed
+    if (result.error)
+      service.showNotice("Could not " + (op.completed ? "complete" : "reopen") + " “" + op.name + "”: " + result.error.message, "error")
+    else if (Model.completionWrite(op.gid, marks.shown, marks.confirmed))
+      service.enqueueWrite({ kind: "completion", gid: op.gid, name: op.name })
   }
 
   function showNotice(text, tone) {
@@ -208,6 +262,7 @@ Item {
     watchChanges: true
     printErrors: false
     onFileChanged: reload()
+    onLoadFailed: function(error) { if (error === FileViewError.FileNotFound) service.clearSnapshot() }
     onLoaded: {
       var result = Model.parseSnapshot(text())
       if (!result.snapshot) return

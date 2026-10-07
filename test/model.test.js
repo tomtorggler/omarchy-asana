@@ -119,3 +119,90 @@ test('parseTaskResult accepts a task, relays errors, rejects garbage', () => {
   assert.equal(M.parseTaskResult('').error.kind, 'api')
   assert.equal(M.parseTaskResult('{"task":{}}').error.kind, 'api')
 })
+
+test('workspaceMatches follows how asana-fetch picks the workspace', () => {
+  const snap = {
+    workspace: { gid: '2', name: 'Acme Studio' },
+    workspaces: [{ gid: '1', name: 'Personal' }, { gid: '2', name: 'Acme Studio' }]
+  }
+  assert.equal(M.workspaceMatches(snap, '2'), true)
+  assert.equal(M.workspaceMatches(snap, 'acme studio'), true)
+  assert.equal(M.workspaceMatches(snap, '1'), false)
+  assert.equal(M.workspaceMatches(snap, 'Personal'), false)
+  assert.equal(M.workspaceMatches(snap, ''), false)
+  assert.equal(M.workspaceMatches({ ...snap, workspace: { gid: '1', name: 'Personal' } }, ''), true)
+  assert.equal(M.workspaceMatches(null, ''), false)
+})
+
+test('workspaceMatches fails closed and follows asana-fetch on duplicate names', () => {
+  assert.equal(M.workspaceMatches({ workspace: { gid: '1', name: 'A' } }, ''), false)
+  assert.equal(M.workspaceMatches({ workspace: { gid: '1', name: 'A' }, workspaces: [] }, ''), false)
+  const dup = { workspaces: [{ gid: '1', name: 'Team' }, { gid: '2', name: 'Team' }] }
+  assert.equal(M.workspaceMatches({ ...dup, workspace: { gid: '1', name: 'Team' } }, 'team'), true)
+  assert.equal(M.workspaceMatches({ ...dup, workspace: { gid: '2', name: 'Team' } }, 'team'), false)
+  assert.equal(M.workspaceMatches({ ...dup, workspace: { gid: '2', name: 'Team' } }, '2'), true)
+})
+
+// Plays the service's completion rules: one write per task in flight, a
+// toggle only flips the shown mark, results go through afterCompletionWrite.
+function completionRun(steps) {
+  let shown = {}, confirmed = {}, inFlight = null
+  const sent = []
+  const send = () => {
+    const w = M.completionWrite('t', shown, confirmed)
+    if (w) { inFlight = w; sent.push(w.completed ? 'complete' : 'reopen') }
+  }
+  for (const step of steps) {
+    if (step === 'refresh') {
+      // A fetch that no longer lists the task (Asana already completed it).
+      const pending = inFlight ? { t: true } : {}
+      shown = M.pruneCompleted(shown, { tasks: [] }, pending)
+      confirmed = M.pruneCompleted(confirmed, { tasks: [] }, pending)
+    } else if (step === 'toggle') {
+      shown = shown.t ? {} : { t: true }
+      if (!inFlight) send()
+    } else {
+      const marks = M.afterCompletionWrite('t', inFlight.completed, step === 'ok', shown, confirmed)
+      shown = marks.shown; confirmed = marks.confirmed; inFlight = null
+      send()
+    }
+  }
+  return { shown: !!shown.t, confirmed: !!confirmed.t, sent, inFlight: !!inFlight }
+}
+
+test('completion writes: a quick undo is sent after the first write', () => {
+  assert.deepEqual(completionRun(['toggle', 'toggle', 'ok', 'ok']),
+    { shown: false, confirmed: false, sent: ['complete', 'reopen'], inFlight: false })
+})
+
+test('completion writes: two failures leave the task open, as Asana has it', () => {
+  assert.deepEqual(completionRun(['toggle', 'toggle', 'fail']),
+    { shown: false, confirmed: false, sent: ['complete'], inFlight: false })
+  assert.deepEqual(completionRun(['toggle', 'fail']),
+    { shown: false, confirmed: false, sent: ['complete'], inFlight: false })
+})
+
+test('completion writes: a failed undo keeps the confirmed completion', () => {
+  assert.deepEqual(completionRun(['toggle', 'toggle', 'ok', 'fail']),
+    { shown: true, confirmed: true, sent: ['complete', 'reopen'], inFlight: false })
+})
+
+test('completion writes: toggling back before anything is sent sends nothing more', () => {
+  assert.deepEqual(completionRun(['toggle', 'toggle', 'toggle', 'ok']),
+    { shown: true, confirmed: true, sent: ['complete'], inFlight: false })
+  assert.equal(M.completionWrite('t', {}, {}), null)
+})
+
+test('completion writes: a refresh that lands before the write result sends no reopen', () => {
+  assert.deepEqual(completionRun(['toggle', 'refresh', 'ok']),
+    { shown: true, confirmed: true, sent: ['complete'], inFlight: false })
+  assert.deepEqual(completionRun(['toggle', 'refresh', 'ok', 'refresh']),
+    { shown: false, confirmed: false, sent: ['complete'], inFlight: false })
+  // Undone before the result: Asana has the completion, the reopen follows.
+  assert.deepEqual(completionRun(['toggle', 'toggle', 'refresh', 'ok']),
+    { shown: false, confirmed: true, sent: ['complete', 'reopen'], inFlight: true })
+})
+
+test('pruneCompleted keeps marks for tasks with a pending write', () => {
+  assert.deepEqual(M.pruneCompleted({ a: true, gone: true }, snapshot, { gone: true }), { a: true, gone: true })
+})

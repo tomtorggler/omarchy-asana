@@ -201,13 +201,15 @@ function defaultCollapsed(sections, names) {
 }
 
 // Drop completion marks for tasks the snapshot no longer contains; the fetch
-// has caught up with them.
-function pruneCompleted(completedGids, snapshot) {
+// has caught up with them. Tasks in pendingGids keep theirs until their
+// write is done.
+function pruneCompleted(marks, snapshot, pendingGids) {
   var present = {}
+  for (var pending in pendingGids) if (pendingGids[pending]) present[pending] = true
   var tasks = snapshot && snapshot.tasks ? snapshot.tasks : []
   for (var i = 0; i < tasks.length; i++) if (tasks[i]) present[tasks[i].gid] = true
   var next = {}
-  for (var gid in completedGids) if (completedGids[gid] && present[gid]) next[gid] = true
+  for (var gid in marks) if (marks[gid] && present[gid]) next[gid] = true
   return next
 }
 
@@ -221,6 +223,53 @@ function relativeTime(iso, nowMs) {
   return Math.floor(seconds / 86400) + "d ago"
 }
 
+// ASCII-only lowercase, like jq's ascii_downcase in asana-fetch.
+function asciiLower(text) {
+  return String(text || "").replace(/[A-Z]/g, function(c) { return c.toLowerCase() })
+}
+
+// Whether a snapshot shows the workspace the setting asks for, resolved the
+// way asana-fetch resolves it: the first workspace whose gid or name (any
+// case) matches, or the first workspace for an empty setting. Writes wait
+// until this holds, so a task added right after changing the setting cannot
+// land in the old workspace. Anything missing counts as no match.
+function workspaceMatches(snapshot, setting) {
+  if (!snapshot || !snapshot.workspace || !Array.isArray(snapshot.workspaces)) return false
+  var want = String(setting || "")
+  for (var i = 0; i < snapshot.workspaces.length; i++) {
+    var ws = snapshot.workspaces[i]
+    if (!ws) continue
+    if (want === "" || ws.gid === want || asciiLower(ws.name) === asciiLower(want))
+      return ws.gid === snapshot.workspace.gid
+  }
+  return false
+}
+
+// Completion marks are two maps of gid -> true: `shown` is what the list
+// displays, `confirmed` what Asana has accepted since the last fetch. A
+// toggle changes only `shown`; at most one write per task is in flight, and
+// completionWrite says what it should send, if anything.
+function completionWrite(gid, shown, confirmed) {
+  var want = !!(shown && shown[gid])
+  return want === !!(confirmed && confirmed[gid]) ? null : { gid: gid, completed: want }
+}
+
+function withMark(marks, gid, on) {
+  var next = {}
+  for (var key in marks) if (marks[key]) next[key] = true
+  if (on) next[gid] = true
+  else delete next[gid]
+  return next
+}
+
+// After writing `completed` for gid: on success Asana has it; on failure the
+// list goes back to what Asana has. Either way, completionWrite then tells
+// whether a later toggle still needs sending.
+function afterCompletionWrite(gid, completed, ok, shown, confirmed) {
+  if (ok) return { shown: withMark(shown, gid, !!shown[gid]), confirmed: withMark(confirmed, gid, completed) }
+  return { shown: withMark(shown, gid, !!confirmed[gid]), confirmed: withMark(confirmed, gid, !!confirmed[gid]) }
+}
+
 function myTasksUrl(snapshot) {
   if (!snapshot || !snapshot.taskListGid) return "https://app.asana.com/"
   return "https://app.asana.com/0/" + snapshot.taskListGid + "/list"
@@ -230,6 +279,7 @@ if (typeof module !== "undefined") module.exports = {
   parseSnapshot: parseSnapshot, parseTaskResult: parseTaskResult, dayNumber: dayNumber, localYmd: localYmd, dueInfo: dueInfo,
   projectColor: projectColor, taskView: taskView, buildSections: buildSections,
   flattenRows: flattenRows, summary: summary, defaultCollapsed: defaultCollapsed,
-  pruneCompleted: pruneCompleted,
+  pruneCompleted: pruneCompleted, workspaceMatches: workspaceMatches,
+  completionWrite: completionWrite, afterCompletionWrite: afterCompletionWrite,
   relativeTime: relativeTime, myTasksUrl: myTasksUrl
 }

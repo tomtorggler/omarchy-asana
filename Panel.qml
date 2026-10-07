@@ -139,7 +139,7 @@ Panel {
 
   function statusLine() {
     if (root.snapshot === null) return root.asana && root.asana.loading ? "Loading…" : ""
-    var parts = [root.counts.open + " open"]
+    var parts = [root.counts.open + (root.snapshot.truncated ? "+" : "") + " open"]
     if (root.counts.dueToday > 0) parts.push(root.counts.dueToday + " due today")
     return parts.join(" · ")
   }
@@ -181,7 +181,7 @@ Panel {
     function add(): void { root.open(); root.startAdding() }
     function refresh(): string { root.refresh(); return root.asana ? "ok" : "unavailable" }
     function status(): string {
-      return JSON.stringify({ counts: root.counts, error: root.asana ? root.asana.error : null, fetchedAt: root.snapshot ? root.snapshot.fetchedAt : null })
+      return JSON.stringify({ counts: root.counts, truncated: root.snapshot ? root.snapshot.truncated === true : false, error: root.asana ? root.asana.error : null, fetchedAt: root.snapshot ? root.snapshot.fetchedAt : null })
     }
   }
 
@@ -192,7 +192,7 @@ Panel {
     anchors.fill: parent
     bar: root.bar
     text: String.fromCodePoint(0xF0134) // nf-md-checkbox_marked_circle_outline
-      + (root.badgeCount > 0 && !root.vertical ? " " + root.badgeCount : "")
+      + (root.badgeCount > 0 && !root.vertical ? " " + root.badgeCount + (root.badge === "open" && root.snapshot && root.snapshot.truncated ? "+" : "") : "")
     active: root.counts.overdue > 0
     dimmed: root.snapshot === null
     tooltipText: root.tooltip()
