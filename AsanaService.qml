@@ -63,9 +63,10 @@ Item {
       service.refreshQueued = true
       return
     }
-    var command = [service.binDir + "/asana-fetch", "--quiet"]
-    if (service.workspace !== "") command.push("--workspace", service.workspace)
-    fetchProc.command = command
+    // Names go through the environment, which only this user can read; the
+    // command line is visible to every local user.
+    fetchProc.command = [service.binDir + "/asana-fetch", "--quiet"]
+    fetchProc.environment = { ASANA_WORKSPACE: service.workspace }
     service.loading = true
     fetchProc.running = true
   }
@@ -140,10 +141,13 @@ Item {
     var op = service.writeQueue[0]
     service.writeQueue = service.writeQueue.slice(1)
     service.runningWrite = op
-    var command = [service.binDir + "/asana-task"]
-    if (op.kind === "add") command.push("add", String(service.snapshot.workspace.gid), op.name)
-    else command.push(op.kind, op.gid)
-    taskProc.command = command
+    if (op.kind === "add") {
+      taskProc.command = [service.binDir + "/asana-task", "add", String(service.snapshot.workspace.gid)]
+      taskProc.environment = { ASANA_TASK_NAME: op.name }
+    } else {
+      taskProc.command = [service.binDir + "/asana-task", op.kind, op.gid]
+      taskProc.environment = ({})
+    }
     taskProc.running = true
   }
 

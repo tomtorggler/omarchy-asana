@@ -3,6 +3,11 @@
 #
 # Failures print {"error":{"kind":...,"message":...}} on the caller's real
 # stdout and exit non-zero: 2 no-token, 3 auth, 4 network, 5 api.
+#
+# Task names, workspace names and API messages never go into a command's
+# arguments, which every local user can read in the process list. They travel
+# through stdin, files in a private temp dir, or the environment (readable
+# only by you).
 
 API="https://app.asana.com/api/1.0"
 TOKEN_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/asana/token"
@@ -14,7 +19,7 @@ CACHE_FILE="$CACHE_DIR/tasks.json"
 exec 3>&1
 
 fail() {
-  jq -cn --arg kind "$1" --arg message "$2" '{error: {kind: $kind, message: $message}}' >&3
+  printf '%s' "$2" | jq -cRs --arg kind "$1" '{error: {kind: $kind, message: .}}' >&3
   case "$1" in
     no-token) exit 2 ;;
     auth) exit 3 ;;

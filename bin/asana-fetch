@@ -4,11 +4,12 @@
 # bar widget. Writes a snapshot to the cache file (which the widget watches)
 # and prints it to stdout.
 #
-# Usage: asana-fetch [--workspace <gid|name>] [--quiet]
+# Usage: [ASANA_WORKSPACE=<gid|name>] asana-fetch [--quiet]
 #
-#   --workspace  Workspace to read. Defaults to the first workspace of the
-#                token's user.
-#   --quiet      Do not print the snapshot on success.
+#   ASANA_WORKSPACE  Workspace to read; defaults to the token user's first.
+#                    An environment variable, not an option, because options
+#                    show in the process list.
+#   --quiet          Do not print the snapshot on success.
 #
 # The token is looked up in this order:
 #   1. $ASANA_TOKEN
@@ -23,12 +24,11 @@ source "$(dirname -- "$(readlink -f -- "$0")")/asana-common.sh"
 
 TASK_FIELDS="name,resource_subtype,due_on,assignee_section.name,projects.name,projects.color,num_subtasks,permalink_url,parent.name"
 
-workspace_arg=""
+workspace_arg=${ASANA_WORKSPACE:-}
 quiet=0
 
 while (($#)); do
   case "$1" in
-    --workspace) workspace_arg="${2:-}"; shift 2 ;;
     --quiet) quiet=1; shift ;;
     -h | --help) sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) fail api "Unknown option '$1'." ;;
@@ -39,21 +39,23 @@ require_token
 
 me=$(api GET "/users/me?opt_fields=name,email,workspaces.name") || exit $?
 
-workspace=$(jq -c --arg want "$workspace_arg" '
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+printf '%s' "$me" >"$work/me.json"
+printf '%s' "$workspace_arg" >"$work/want.txt"
+
+workspace=$(jq -c --rawfile want "$work/want.txt" '
   .data.workspaces as $ws
   | if $want == "" then $ws[0]
     else ($ws | map(select(.gid == $want or (.name | ascii_downcase) == ($want | ascii_downcase))) | .[0])
     end
-  | select(. != null)' <<<"$me")
+  | select(. != null)' "$work/me.json")
 [[ -n $workspace ]] || fail api "Workspace '${workspace_arg}' not found for this token."
+printf '%s' "$workspace" >"$work/workspace.json"
 workspace_gid=$(jq -r '.gid' <<<"$workspace")
 
 task_list=$(api GET "/users/me/user_task_list?workspace=$workspace_gid&opt_fields=name") || exit $?
 task_list_gid=$(jq -r '.data.gid' <<<"$task_list")
-
-work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
-printf '%s' "$me" >"$work/me.json"
 
 # The sections of "My tasks" in their on-screen order. Asana serves them from
 # the project sections endpoint; if that ever stops working the widget falls
@@ -71,14 +73,14 @@ done
 
 snapshot=$(jq -cn \
   --slurpfile me "$work/me.json" \
-  --argjson workspace "$workspace" \
+  --slurpfile workspace "$work/workspace.json" \
   --arg taskListGid "$task_list_gid" \
   --slurpfile sections "$work/sections.json" \
   --slurpfile pages <(cat "$work"/page-*.json) \
   '{
     fetchedAt: (now | todate),
     user: {gid: $me[0].data.gid, name: $me[0].data.name},
-    workspace: {gid: $workspace.gid, name: $workspace.name},
+    workspace: {gid: $workspace[0].gid, name: $workspace[0].name},
     workspaces: $me[0].data.workspaces,
     taskListGid: $taskListGid,
     sections: $sections[0],

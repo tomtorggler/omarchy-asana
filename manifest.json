@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.tomtorggler.asana",
   "name": "Asana",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": "Thomas Torggler",
   "license": "MIT",
   "description": "Your Asana My Tasks list, grouped by section, in a keyboard-driven bar popup.",

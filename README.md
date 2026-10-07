@@ -103,8 +103,12 @@ to see exactly what the widget sees:
 bin/asana-fetch | jq '.tasks[] | {name, section: .assignee_section.name, due_on}'
 ```
 
-`bin/asana-task complete|reopen <gid>` and `bin/asana-task add <workspace-gid>
-<name>` do the writes.
+`bin/asana-task complete|reopen <gid>` and `bin/asana-task add <workspace-gid>`
+do the writes; `add` reads the task name from `$ASANA_TASK_NAME` or stdin:
+
+```bash
+echo "Call the bank" | bin/asana-task add <workspace-gid>
+```
 
 | File | Role |
 |---|---|
@@ -120,6 +124,10 @@ bin/asana-fetch | jq '.tasks[] | {name, section: .assignee_section.name, due_on}
   popup runs `omarchy-launch-browser` to open tasks and a floating terminal
   for **Sign in**. Commands are argument lists; the one value the terminal
   launcher passes through a shell (the `asana-login` path) is quoted first.
+- **Process list:** command lines are readable by every local user, so they
+  carry only numeric Asana ids. Task names, the workspace name, API messages
+  and the token go through stdin, the environment, a file descriptor, or a
+  private temp file. `tests/argv-privacy` checks this.
 - **Files written:** `~/.cache/omarchy-asana/tasks.json` (task snapshot),
   `~/.local/state/omarchy-asana/state.json` (folded sections), and the token,
   either in the keyring or in `~/.config/omarchy/asana/token` (mode 600).

@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Command lines are readable by every local user (/proc/<pid>/cmdline), so
+# task names, workspace names, API messages and the token must never appear
+# in one. This runs the real scripts with PATH limited to logging shims and a
+# fake curl, then fails if any logged command line contains a secret. A
+# command the scripts call without a shim fails the run too.
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+shims="$tmp/shims"
+log="$tmp/argv.log"
+mkdir -p "$shims" "$tmp/cache"
+: >"$log"
+
+real_bash=$(command -v bash)
+real_jq=$(command -v jq)
+
+for cmd in bash jq sed cat tr mktemp rm mv mkdir dirname readlink; do
+  real=$(command -v "$cmd")
+  printf '#!%s\nprintf "%%s\\n" "%s $*" >>"%s"\nexec %s "$@"\n' \
+    "$real_bash" "$cmd" "$log" "$real" >"$shims/$cmd"
+done
+
+# A fake curl: logs its arguments, answers by URL, and echoes the name of a
+# created task back from the request body on stdin.
+cat >"$shims/curl" <<EOF
+#!$real_bash
+printf '%s\n' "curl \$*" >>"$log"
+method=GET
+for ((i = 1; i <= \$#; i++)); do [[ \${!i} == -X ]] && { j=\$((i + 1)); method=\${!j}; }; done
+url=\${!#}
+body=\$($(command -v cat))
+case "\$method \$url" in
+  "GET "*/users/me\?*) out='{"data":{"gid":"1","name":"SECRET-USER","workspaces":[{"gid":"42","name":"SECRET-WS-NAME"}]}}' ;;
+  "GET "*/users/me/user_task_list*) out='{"data":{"gid":"7"}}' ;;
+  "GET "*/sections*) out='{"data":[{"gid":"5","name":"SECRET-SECTION"}]}' ;;
+  "GET "*/tasks*) out='{"data":[{"gid":"9","name":"SECRET-TASK"}],"next_page":null}' ;;
+  "POST "*/tasks*) out=\$(printf '%s' "\$body" | $real_jq -c '{data: {gid: "10", name: .data.name, completed: false}}') ;;
+  *) printf '{"errors":[{"message":"SECRET-API-MESSAGE"}]}\n400'; exit 0 ;;
+esac
+printf '%s\n200' "\$out"
+EOF
+chmod +x "$shims"/*
+
+run() {
+  env -i HOME="$tmp" XDG_CACHE_HOME="$tmp/cache" PATH="$shims" ASANA_TOKEN=SECRET-TOKEN "$@"
+}
+
+fail() { printf 'argv-privacy: %s\n' "$*" >&2; exit 1; }
+
+run ASANA_WORKSPACE=SECRET-WS-NAME "$root/bin/asana-fetch" --quiet || fail "asana-fetch failed"
+grep -q SECRET-TASK "$tmp/cache/omarchy-asana/tasks.json" || fail "asana-fetch wrote no tasks"
+
+out=$(run ASANA_WORKSPACE=SECRET-MISSING-WS "$root/bin/asana-fetch" --quiet) && fail "unknown workspace accepted"
+grep -q SECRET-MISSING-WS <<<"$out" || fail "workspace error lost its message: $out"
+
+out=$(run ASANA_TASK_NAME=SECRET-ENV-TASK "$root/bin/asana-task" add 42) || fail "add from env failed: $out"
+grep -q '"name":"SECRET-ENV-TASK"' <<<"$out" || fail "add from env: $out"
+
+out=$(printf '  SECRET-STDIN-TASK \n' | run "$root/bin/asana-task" add 42) || fail "add from stdin failed: $out"
+grep -q '"name":"SECRET-STDIN-TASK"' <<<"$out" || fail "add from stdin: $out"
+
+out=$(run "$root/bin/asana-task" complete 999 </dev/null) && fail "API error not reported"
+grep -q SECRET-API-MESSAGE <<<"$out" || fail "API error lost its message: $out"
+
+[[ -s $log ]] || fail "no commands were logged"
+if grep -n SECRET "$log"; then fail "secrets in command lines (above)"; fi
+printf 'argv-privacy: %d command lines checked, no secrets.\n' "$(wc -l <"$log")"
